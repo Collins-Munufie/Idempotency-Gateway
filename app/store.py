@@ -28,3 +28,13 @@ class IdempotencyStore:
 
     def exists(self, key: str) -> bool:
         return key in self._store
+
+    def wait_until_completed(self, key: str, poll_interval: float = 0.05):
+        """
+        Block until the given idempotency key finishes processing.
+        """
+        while True:
+            record = self.get(key)
+            if record and record["status"] == "completed":
+                return record
+            time.sleep(poll_interval)
