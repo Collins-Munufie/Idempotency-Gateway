@@ -1,5 +1,11 @@
 from fastapi import FastAPI
 from app.store import IdempotencyStore
+from pydantic import BaseModel
+
+class PaymentRequest(BaseModel):
+    amount: int
+    currency: str
+
 
 app = FastAPI(title="Idempotency Gateway")
 
