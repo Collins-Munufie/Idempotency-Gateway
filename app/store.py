@@ -25,6 +25,7 @@ class IdempotencyStore:
             self._store[key]["status"] = "completed"
             self._store[key]["response_body"] = response_body
             self._store[key]["response_code"] = response_code
+            self._store[key]["created_at"] = time.time()  # reset timestamp
 
     def exists(self, key: str) -> bool:
         return key in self._store
@@ -38,3 +39,29 @@ class IdempotencyStore:
             if record and record["status"] == "completed":
                 return record
             time.sleep(poll_interval)
+
+
+class IdempotencyStore:
+    def __init__(self, ttl: int = 300):
+        """
+        ttl: time in seconds to keep completed requests
+        default: 300s = 5 minutes
+        """
+        self._store: Dict[str, Dict[str, Any]] = {}
+        self._lock = Lock()
+        self.ttl = ttl
+
+    def get(self, key: str):
+        record = self._store.get(key)
+        if not record:
+            return None
+
+        # Check TTL
+        if record["status"] == "completed":
+            elapsed = time.time() - record["created_at"]
+            if elapsed > self.ttl:
+                # Expire the key
+                with self._lock:
+                    del self._store[key]
+                return None
+        return record
