@@ -10,6 +10,7 @@ app = FastAPI(title="Idempotency Gateway")
 
 store = IdempotencyStore()
 
+
 class PaymentRequest(BaseModel):
     amount: int
     currency: str
@@ -34,7 +35,7 @@ def process_payment(
         )
 
     # 2. Hash request body
-    request_hash = hash_request_body(payload.dict())
+    request_hash = hash_request_body(payload.model_dump())
 
     existing = store.get(idempotency_key)
 
@@ -47,20 +48,37 @@ def process_payment(
                 detail="Idempotency key already used for a different request body."
             )
 
-        # 3b. In-flight request → wait
+        # 3b. In-flight request → wait for it to complete
         if existing["status"] == "processing":
             record = store.wait_until_completed(idempotency_key)
+            if record is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Payment processing timed out. Please retry."
+                )
             response.headers["X-Cache-Hit"] = "true"
             response.status_code = record["response_code"]
             return record["response_body"]
 
-        # 3c. Completed request → replay
+        # 3c. Completed request → replay cached response
         response.headers["X-Cache-Hit"] = "true"
         response.status_code = existing["response_code"]
         return existing["response_body"]
 
-    # 4. First-time request
-    store.set_processing(idempotency_key, request_hash)
+    # 4. First-time request — atomically claim the key
+    claimed = store.set_processing(idempotency_key, request_hash)
+    if not claimed:
+        # Another thread just claimed it between our get() and set_processing()
+        # Treat it as an in-flight request
+        record = store.wait_until_completed(idempotency_key)
+        if record is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Payment processing timed out. Please retry."
+            )
+        response.headers["X-Cache-Hit"] = "true"
+        response.status_code = record["response_code"]
+        return record["response_body"]
 
     # 5. Simulate payment processing
     time.sleep(2)
